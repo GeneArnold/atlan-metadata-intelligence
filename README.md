@@ -29,7 +29,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Run locally
-streamlit run app/app.py
+streamlit run app.py
 
 # OR run with Databricks local app proxy
 databricks apps run-local --prepare-environment
