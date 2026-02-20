@@ -1,0 +1,21 @@
+bundle:
+  name: atlan-metadata-intelligence
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-8d941db8-48cd.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-8d941db8-48cd.cloud.databricks.com
+
+resources:
+  apps:
+    atlan_metadata_intelligence:
+      name: "atlan-metadata-intelligence"
+      description: "AI-powered Atlan Metadata Intelligence App"
+      source_code_path: .
