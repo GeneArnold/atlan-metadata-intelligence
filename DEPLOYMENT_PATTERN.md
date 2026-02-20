@@ -2,142 +2,258 @@
 
 This document captures the **working pattern** for deploying Streamlit apps to Databricks Apps, based on our successful Phase 1 deployment.
 
-## ✅ Working App Structure
+## ✅ Working Directory Structure
 
 ```
-atlan-metadata-intelligence/
-├── .gitignore
-├── README.md
-├── CLAUDE.md
-├── PROJECT_LOG.md
-├── DEPLOYMENT_PATTERN.md    # This file
-├── project-handoff.md
-├── databricks.yml
-├── app.py                    # ✅ IN ROOT (not in subdirectory)
-├── app.yaml                  # ✅ IN ROOT
-└── requirements.txt          # ✅ IN ROOT
+atlan-databricks-mdlh-app/              # Parent directory (Git repo root)
+├── venv/                               # Virtual environment (gitignored)
+├── .git/                               # Git repository
+├── .gitignore                          # Git ignore file
+├── README.md                           # Project documentation
+├── WORKFLOW.md                         # Development workflow guide
+├── SETUP_LOG.md                        # Complete setup documentation
+├── CLAUDE.md                           # AI assistant instructions
+├── PROJECT_LOG.md                      # Development log
+├── project-handoff.md                  # Project handoff document
+├── DEPLOYMENT_PATTERN.md               # This file
+├── databricks.yml                      # Databricks Asset Bundle config
+└── databricks-app/                     # ← ONLY THIS syncs to Databricks
+    ├── app.py                          # Streamlit application
+    ├── app.yaml                        # Databricks app configuration
+    └── requirements.txt                # Python dependencies
 ```
 
-**Key Point:** All three essential files (`app.py`, `app.yaml`, `requirements.txt`) must be in the **root directory**.
+**Key Design Principle:** Parent/child structure allows extensive documentation and tooling in the parent directory while keeping the Databricks workspace clean with only essential app files.
 
 ## ✅ Working app.yaml
 
 ```yaml
-command: ["streamlit", "run", "app.py", "--server.port", "8501", "--server.headless", "true"]
+command: [
+  "streamlit",
+  "run",
+  "app.py"
+]
 ```
 
 **Key Points:**
-- Points to `app.py` (not `app/app.py`)
-- Includes `--server.headless true` flag for Databricks
-- Uses port 8501 (Databricks standard)
+- Simple command pointing to `app.py` in the app directory
+- No need for `--server.headless` flag (works without it)
+- Port is automatically managed by Databricks
 
 ## ✅ Working requirements.txt
 
 ```
-streamlit>=1.32.0
+streamlit~=1.38.0
+pandas~=2.2.3
 ```
 
 **Key Points:**
-- Use version ranges (`>=`) not exact versions
+- Use version ranges (`~=`) not exact versions for flexibility
 - Keep minimal - only add what you need
 - Databricks installs these automatically on deployment
+- Additional packages can be added as needed
 
-## ✅ Working Deployment Method
+## ✅ Working Deployment Workflow
 
-### **Option 1: Databricks UI (RECOMMENDED for initial setup)**
-
-1. In Databricks Workspace → Compute → Apps → Create App
-2. Configure:
-   - **Name:** `atlan-metadata-intelligence`
-   - **Source Type:** Git repository
-   - **Repository URL:** `https://github.com/GeneArnold/atlan-metadata-intelligence`
-   - **Branch:** `main`
-3. Click **Create & Deploy**
-4. Wait for "App started successfully" status
-
-**Why this works:**
-- Databricks clones repo directly (clean source)
-- Automatically detects `app.yaml`
-- Installs dependencies from `requirements.txt`
-- No file format issues (vs CLI upload)
-
-### **Option 2: CLI Deploy (for updates after initial setup)**
+### **Step 1: Sync Files to Databricks Workspace**
 
 ```bash
-# Only after app exists via UI
-databricks apps deploy atlan-metadata-intelligence \
-  --source-code-path /Workspace/Users/<your-email>/path-to-app
+databricks sync --watch databricks-app/ /Workspace/Users/gene.arnold@atlan.com/databricks_apps/atlan-metadata-intelligence_2026_02_20-18_30/streamlit-hello-world-app
 ```
 
-## ✅ Development Workflow
+**What this does:**
+- Watches `databricks-app/` directory for changes
+- Automatically uploads changed files to Databricks workspace
+- Keeps running in background (use separate terminal)
+- **Important:** This ONLY syncs files - it does NOT deploy the app
 
-1. **Develop locally:**
-   ```bash
-   streamlit run app.py
-   ```
+**Success indicators:**
+- Initial sync shows: `Initial Sync Complete`
+- File changes show: `Action: PUT: app.py` followed by `Complete`
 
-2. **Test locally:**
-   - Verify app loads at `http://localhost:8501`
-   - Test all functionality
+### **Step 2: Deploy the App**
 
-3. **Commit to Git:**
-   ```bash
-   git add .
-   git commit -m "Description of changes"
-   git push origin main
-   ```
+```bash
+databricks apps deploy atlan-metadata-intelligence
+```
 
-4. **Deploy to Databricks:**
-   - If first time: Use Databricks UI (Option 1)
-   - If updating existing: Redeploy through UI or CLI
+**What this does:**
+- Takes the synced files from workspace
+- Builds and deploys the app
+- Restarts the app with new code
+- **This step is REQUIRED** for changes to appear in the running app
 
-## ✅ Verification Checklist
-
-After deployment, verify:
-- [ ] App status shows "SUCCEEDED"
-- [ ] App status shows "RUNNING"
-- [ ] Compute status shows "ACTIVE"
-- [ ] App URL is accessible (returns 401 when not logged in - this is correct!)
-- [ ] App displays correctly when accessed while logged into Databricks
-
-## ❌ Common Pitfalls to Avoid
-
-1. **Nested directory structure** - Don't put app.py in `app/` subdirectory
-2. **CLI file upload** - Files get wrong format (NOTEBOOK vs FILE)
-3. **Missing --server.headless flag** - App won't start in Databricks
-4. **Wrong app.yaml path** - Must point to `app.py` not `app/app.py`
-5. **Including venv/ in uploads** - Massive unnecessary upload (use .gitignore)
-
-## 🔑 Success Indicators
-
+**Success indicators:**
 ```json
 {
-  "app_status": {
-    "message": "App has status: App is running",
-    "state": "RUNNING"
-  },
-  "compute_status": {
-    "message": "App compute is running.",
-    "state": "ACTIVE"
-  },
-  "active_deployment": {
-    "status": {
-      "message": "App started successfully",
-      "state": "SUCCEEDED"
-    }
+  "status": {
+    "message": "App started successfully",
+    "state": "SUCCEEDED"
   }
 }
 ```
 
-## 📊 Working App Example
+## ✅ Complete Development Workflow
 
-**Live URL:** https://atlan-metadata-intelligence-5448350934783685.aws.databricksapps.com
+### Terminal 1: Local Development Server
+```bash
+cd databricks-app
+../venv/bin/streamlit run app.py
+```
+- Runs app at http://localhost:8501
+- For rapid testing and iteration
+- Auto-reloads on file changes
 
-**GitHub Repo:** https://github.com/GeneArnold/atlan-metadata-intelligence
+### Terminal 2: Databricks Sync (Background)
+```bash
+databricks sync --watch databricks-app/ /Workspace/Users/gene.arnold@atlan.com/databricks_apps/atlan-metadata-intelligence_2026_02_20-18_30/streamlit-hello-world-app
+```
+- Keeps running to auto-sync files
+- Monitors for changes
+- Uploads to workspace automatically
 
-Use this as the reference for all future development!
+### Terminal 3: Deploy Commands
+```bash
+# When ready to update Databricks app:
+databricks apps deploy atlan-metadata-intelligence
+
+# Check app status:
+databricks apps get atlan-metadata-intelligence
+```
+
+## ✅ Why This Pattern Works
+
+### Parent/Child Directory Structure
+**Problem:** Don't want documentation, config files, and development tools syncing to Databricks
+**Solution:** Only sync `databricks-app/` subdirectory, keep everything else in parent
+
+**Benefits:**
+- Clean Databricks workspace (only app files)
+- Extensive local documentation without clutter
+- Virtual environment stays local (not uploaded)
+- Git tracks everything, Databricks gets only what it needs
+
+### Two-Step Deployment (Sync + Deploy)
+**Problem:** Initial expectation was files would auto-deploy
+**Reality:** Databricks Apps uses a two-step process by design
+
+**Step 1 - Sync:** Updates source files in workspace (staging)
+**Step 2 - Deploy:** Builds and restarts app with those files
+
+**Why it's better:**
+- Control when app restarts (not on every typo)
+- Test multiple changes before deploying
+- Safer production deployments
+
+### Local Development First
+**Pattern:** Always test locally before deploying to Databricks
+
+**Workflow:**
+1. Edit files in `databricks-app/`
+2. Test at http://localhost:8501 (instant feedback)
+3. When satisfied, deploy to Databricks
+4. Verify in Databricks environment
+
+## ✅ Key Commands Reference
+
+### Setup (One-Time)
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Install dependencies
+./venv/bin/pip install -r databricks-app/requirements.txt
+
+# Configure Databricks CLI
+databricks configure --token
+```
+
+### Daily Development
+```bash
+# Run locally (Terminal 1)
+cd databricks-app && ../venv/bin/streamlit run app.py
+
+# Start sync (Terminal 2)
+databricks sync --watch databricks-app/ /Workspace/Users/gene.arnold@atlan.com/databricks_apps/atlan-metadata-intelligence_2026_02_20-18_30/streamlit-hello-world-app
+
+# Deploy when ready (Terminal 3)
+databricks apps deploy atlan-metadata-intelligence
+```
+
+### Git Workflow
+```bash
+git add .
+git commit -m "Description of changes"
+git push origin main
+```
+
+## ✅ Verification Checklist
+
+After deployment, verify:
+- [ ] Deployment status shows `"SUCCEEDED"`
+- [ ] App status shows `"RUNNING"`
+- [ ] App URL is accessible in Databricks workspace
+- [ ] Changes appear in the live app
+- [ ] No errors in app logs
+
+Check app status:
+```bash
+databricks apps get atlan-metadata-intelligence
+```
+
+## ❌ Common Pitfalls to Avoid
+
+1. **Expecting auto-deployment** - Sync does NOT deploy, must run `databricks apps deploy`
+2. **Syncing entire parent directory** - Only sync `databricks-app/` subdirectory
+3. **Forgetting to activate venv** - Use `./venv/bin/pip` or activate first
+4. **Not testing locally first** - Always test at http://localhost:8501 before deploying
+5. **Including venv/ in sync** - Keep venv in parent (gitignored, won't sync)
+
+## 🔑 Success Indicators
+
+### Sync Working
+```
+Action: PUT: app.py, app.yaml, requirements.txt
+Uploaded requirements.txt
+Uploaded app.py
+Uploaded app.yaml
+Initial Sync Complete
+```
+
+### Deployment Successful
+```json
+{
+  "status": {
+    "message": "App started successfully",
+    "state": "SUCCEEDED"
+  }
+}
+```
+
+### App Running
+- Status: `RUNNING`
+- Compute: `ACTIVE`
+- URL accessible in Databricks workspace
+
+## 📊 Databricks App Details
+
+**App Name:** `atlan-metadata-intelligence`
+
+**Workspace Path:** `/Workspace/Users/gene.arnold@atlan.com/databricks_apps/atlan-metadata-intelligence_2026_02_20-18_30/streamlit-hello-world-app`
+
+**Access:** Databricks Workspace → Compute → Apps → `atlan-metadata-intelligence`
+
+## 🎯 Best Practices
+
+1. **Always test locally first** using `streamlit run app.py`
+2. **Keep sync running** in background during development
+3. **Deploy intentionally** when changes are tested and ready
+4. **Commit to Git regularly** to backup all work
+5. **Use parent directory** for all documentation and configs
+6. **Keep databricks-app/ minimal** with only essential app files
 
 ---
 
-_Last Updated: February 20, 2026_
-_Status: Phase 1 Complete ✅_
+**Last Updated:** 2026-02-20
+**Status:** Phase 1 Complete ✅
+**This pattern is proven and working!**
