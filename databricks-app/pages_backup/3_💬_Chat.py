@@ -39,9 +39,6 @@ if "governance_engine" not in st.session_state and Config.ATLAN_API_KEY:
 
 # Sidebar controls
 with st.sidebar:
-    # Atlan Protection logo at top
-    st.image("images/atlan_protection_v2.png", use_column_width=True)
-
     st.title("⚙️ Controls")
 
     # Atlan Protection Toggle
@@ -208,152 +205,121 @@ if prompt := st.chat_input("Try: 'Show me customers with credit limits over $3,0
 
             # STEP 2: Check if protection is enabled
             if st.session_state.mcp_enabled and st.session_state.get("governance_engine"):
-                # Protection is ON
-                # Check if SQL was actually generated (vs text-only response)
-                if not sql_query:
-                    # Genie returned text only (e.g., answering meta-questions)
-                    if response_text:
-                        st.write(response_text)
-                        st.session_state.chat_messages.append({
-                            "role": "assistant",
-                            "mcp_enabled": True,
-                            "blocked": False,
-                            "content": response_text
-                        })
-                    else:
-                        st.error("❌ No response generated")
-                        st.session_state.chat_messages.append({
-                            "role": "assistant",
-                            "mcp_enabled": True,
-                            "blocked": False,
-                            "content": "Error: No response generated"
-                        })
+                # Protection is ON - run real Atlan governance check
+                engine = st.session_state.governance_engine
+                governance_result = engine.check_query(sql_query)
+
+                if governance_result["blocked"]:
+                    # PII detected - BLOCK
+                    st.error(f"🚫 **Access Blocked — PII Protected Asset**")
+
+                    # Show which columns triggered the block
+                    blocked_cols = governance_result["blocked_columns"]
+                    col_details = governance_result["column_details"]
+
+                    st.markdown(f"""
+                    The data you requested contains personally identifiable information (PII) and cannot be returned.
+
+                    **Blocked Columns ({len(blocked_cols)}):**
+                    """)
+
+                    for col in blocked_cols:
+                        details = col_details.get(col, {})
+                        st.markdown(f"- `{col}` - {', '.join(details.get('classifications', ['PII']))}")
+
+                    st.markdown(f"""
+                    **Policy:** GDPR Article 9 — Sensitive Personal Data
+                    **Data Owner:** Data Governance Team
+                    **Request Access:** governance@company.com
+
+                    💡 *This asset is monitored by Atlan. Governance policy enforced in real-time.*
+                    """)
+
+                    # Store message (blocked)
+                    assistant_msg = {
+                        "role": "assistant",
+                        "mcp_enabled": True,
+                        "blocked": True,
+                        "blocked_columns": blocked_cols,
+                        "content": f"Query blocked: {len(blocked_cols)} PII column(s) detected",
+                        "sql_query": sql_query,
+                        "results_df": None
+                    }
+                    st.session_state.chat_messages.append(assistant_msg)
+
                 else:
-                    # Normal flow - run real Atlan governance check
-                    engine = st.session_state.governance_engine
-                    governance_result = engine.check_query(sql_query)
+                    # No PII - execute the query normally (no special message)
+                    with st.spinner("Executing query..."):
+                        exec_result = client.execute_query(
+                            conversation_id=result["conversation_id"],
+                            message_id=result["message_id"],
+                            attachment_id=result["attachment_id"]
+                        )
 
-                    if governance_result["blocked"]:
-                        # PII detected - BLOCK
-                        st.error(f"🚫 **Access Blocked — PII Protected Asset**")
+                    if exec_result["status"] == "completed":
+                        st.write(response_text)
 
-                        # Show which columns triggered the block
-                        blocked_cols = governance_result["blocked_columns"]
-                        col_details = governance_result["column_details"]
-
-                        st.markdown(f"""
-                        The data you requested contains personally identifiable information (PII) and cannot be returned.
-
-                        **Blocked Columns ({len(blocked_cols)}):**
-                        """)
-
-                        for col in blocked_cols:
-                            details = col_details.get(col, {})
-                            st.markdown(f"- `{col}` - {', '.join(details.get('classifications', ['PII']))}")
-
-                        st.markdown(f"""
-                        **Policy:** GDPR Article 9 — Sensitive Personal Data
-                        **Data Owner:** Data Governance Team
-                        **Request Access:** governance@company.com
-
-                        💡 *This asset is monitored by Atlan. Governance policy enforced in real-time.*
-                        """)
-
-                        # Store message (blocked)
+                        # Store message
                         assistant_msg = {
                             "role": "assistant",
                             "mcp_enabled": True,
-                            "blocked": True,
-                            "blocked_columns": blocked_cols,
-                            "content": f"Query blocked: {len(blocked_cols)} PII column(s) detected",
+                            "blocked": False,
+                            "content": response_text,
                             "sql_query": sql_query,
                             "results_df": None
                         }
+
+                        # SQL query
+                        if sql_query:
+                            with st.expander("📝 View SQL Query"):
+                                st.code(sql_query, language="sql")
+
+                        # Results
+                        if exec_result.get("query_results"):
+                            try:
+                                query_data = exec_result["query_results"]
+                                if "statement_response" in query_data:
+                                    stmt_response = query_data["statement_response"]
+                                    if "result" in stmt_response and "data_array" in stmt_response["result"]:
+                                        data_array = stmt_response["result"]["data_array"]
+
+                                        if "manifest" in stmt_response and "schema" in stmt_response["manifest"]:
+                                            columns = [col["name"] for col in stmt_response["manifest"]["schema"]["columns"]]
+                                        else:
+                                            columns = [f"Column_{i}" for i in range(len(data_array[0]) if data_array else 0)]
+
+                                        if data_array:
+                                            import pandas as pd
+                                            df = pd.DataFrame(data_array, columns=columns)
+                                            assistant_msg["results_df"] = df
+                                            st.dataframe(df, use_container_width=True)
+                                            st.caption(f"📊 {len(df)} rows returned")
+                            except Exception as e:
+                                st.error(f"Error displaying results: {str(e)}")
+
                         st.session_state.chat_messages.append(assistant_msg)
 
                     else:
-                        # No PII - execute the query normally (no special message)
-                        with st.spinner("Executing query..."):
-                            exec_result = client.execute_query(
-                                conversation_id=result["conversation_id"],
-                                message_id=result["message_id"],
-                                attachment_id=result["attachment_id"]
-                            )
-
-                        if exec_result["status"] == "completed":
-                            st.write(response_text)
-
-                            # Store message
-                            assistant_msg = {
-                                "role": "assistant",
-                                "mcp_enabled": True,
-                                "blocked": False,
-                                "content": response_text,
-                                "sql_query": sql_query,
-                                "results_df": None
-                            }
-
-                            # SQL query
-                            if sql_query:
-                                with st.expander("📝 View SQL Query"):
-                                    st.code(sql_query, language="sql")
-
-                            # Results
-                            if exec_result.get("query_results"):
-                                try:
-                                    query_data = exec_result["query_results"]
-                                    if "statement_response" in query_data:
-                                        stmt_response = query_data["statement_response"]
-                                        if "result" in stmt_response and "data_array" in stmt_response["result"]:
-                                            data_array = stmt_response["result"]["data_array"]
-
-                                            if "manifest" in stmt_response and "schema" in stmt_response["manifest"]:
-                                                columns = [col["name"] for col in stmt_response["manifest"]["schema"]["columns"]]
-                                            else:
-                                                columns = [f"Column_{i}" for i in range(len(data_array[0]) if data_array else 0)]
-
-                                            if data_array:
-                                                import pandas as pd
-                                                df = pd.DataFrame(data_array, columns=columns)
-                                                assistant_msg["results_df"] = df
-                                                st.dataframe(df, use_container_width=True)
-                                                st.caption(f"📊 {len(df)} rows returned")
-                                except Exception as e:
-                                    st.error(f"Error displaying results: {str(e)}")
-
-                            st.session_state.chat_messages.append(assistant_msg)
-
-                        else:
-                            # Execution failed
-                            error_msg = f"❌ Query execution failed: {exec_result.get('error', 'Unknown error')}"
-                            st.error(error_msg)
-                            st.session_state.chat_messages.append({
-                                "role": "assistant",
-                                "mcp_enabled": True,
-                                "blocked": False,
-                                "content": error_msg
-                            })
+                        # Execution failed
+                        error_msg = f"❌ Query execution failed: {exec_result.get('error', 'Unknown error')}"
+                        st.error(error_msg)
+                        st.session_state.chat_messages.append({
+                            "role": "assistant",
+                            "mcp_enabled": True,
+                            "blocked": False,
+                            "content": error_msg
+                        })
 
             else:
                 # Protection is OFF - execute the query
                 # Check if we have attachment_id
                 if not result.get("attachment_id"):
-                    # No SQL query generated - check if we have a text response
-                    if response_text:
-                        # Genie returned text only (e.g., answering meta-questions)
-                        st.write(response_text)
-                        st.session_state.chat_messages.append({
-                            "role": "assistant",
-                            "mcp_enabled": False,
-                            "content": response_text
-                        })
-                    else:
-                        st.error("❌ No query attachment found. The SQL may not have generated properly.")
-                        st.session_state.chat_messages.append({
-                            "role": "assistant",
-                            "mcp_enabled": False,
-                            "content": "Error: No query attachment found"
-                        })
+                    st.error("❌ No query attachment found. The SQL may not have generated properly.")
+                    st.session_state.chat_messages.append({
+                        "role": "assistant",
+                        "mcp_enabled": False,
+                        "content": "Error: No query attachment found"
+                    })
                 else:
                     with st.spinner("Executing query..."):
                         # Execute the query using the attachment_id
